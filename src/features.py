@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from config import DATE_COL, DEFAULT_LAGS, DEFAULT_ROLLING_WINDOWS, FORECAST_HORIZON, ID_COLS, TARGET_COL
 from src.data import FavoritaData
@@ -140,14 +141,14 @@ def add_lag_features(
     source = history[[DATE_COL, *ID_COLS, TARGET_COL]].copy()
     source[TARGET_COL] = source[TARGET_COL].fillna(0).clip(lower=0).astype("float32")
 
-    for lag in lags:
+    for lag in tqdm(list(lags), desc="лаги", unit="лаг", leave=False):
         lagged = source.copy()
         lagged[DATE_COL] = lagged[DATE_COL] + pd.to_timedelta(int(lag), unit="D")
         lagged = lagged.rename(columns={TARGET_COL: f"lag_{lag}"})
         result = result.merge(lagged, on=[DATE_COL, *ID_COLS], how="left")
 
     source = source.sort_values([*ID_COLS, DATE_COL])
-    for window in rolling_windows:
+    for window in tqdm(list(rolling_windows), desc="скользящие средние", unit="окно", leave=False):
         col = f"rolling_mean_{window}_lag_{horizon}"
         rolled = source[[DATE_COL, *ID_COLS]].copy()
         rolled[col] = (

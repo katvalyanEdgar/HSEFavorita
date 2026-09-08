@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from config import DATE_COL, TARGET_COL, TORCH_MLP_PARAMS
 from src.models_ml import EXCLUDED_FEATURES, split_feature_columns
@@ -106,8 +107,8 @@ def predict_torch_mlp(
     loss_fn = nn.MSELoss()
 
     model.train()
-    for _ in range(int(run_params["epochs"])):
-        for batch_cat, batch_num, batch_y in loader:
+    for _ in tqdm(range(int(run_params["epochs"])), desc="обучение torch mlp", unit="эпоха"):
+        for batch_cat, batch_num, batch_y in tqdm(loader, desc="батчи", unit="батч", leave=False):
             batch_cat = batch_cat.to(device)
             batch_num = batch_num.to(device)
             batch_y = batch_y.to(device)
@@ -121,7 +122,7 @@ def predict_torch_mlp(
     pred_ds = TensorDataset(torch.from_numpy(p_cat), torch.from_numpy(p_num))
     pred_loader = DataLoader(pred_ds, batch_size=int(run_params["batch_size"]), shuffle=False, num_workers=0)
     with torch.no_grad():
-        for batch_cat, batch_num in pred_loader:
+        for batch_cat, batch_num in tqdm(pred_loader, desc="прогноз torch mlp", unit="батч", leave=False):
             batch_cat = batch_cat.to(device)
             batch_num = batch_num.to(device)
             predictions.append(model(batch_cat, batch_num).cpu().numpy())

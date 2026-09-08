@@ -4,8 +4,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from tqdm.auto import tqdm
 
-from config import DATE_COL, RAW_FILES, TARGET_COL
+from config import DATE_COL, ID_COLS, RAW_FILES, TARGET_COL
 
 
 @dataclass
@@ -34,15 +35,95 @@ def check_raw_files(raw_dir: Path, include_test: bool) -> None:
         )
 
 
-def _read_train(path: Path, nrows: int | None) -> pd.DataFrame:
+def train_date_bounds(raw_dir: Path, nrows: int | None = None) -> tuple[pd.Timestamp, pd.Timestamp]:
+    reader = pd.read_csv(raw_dir / RAW_FILES["train"], usecols=[DATE_COL], chunksize=2_000_000, nrows=nrows)
+    min_date: pd.Timestamp | None = None
+    max_date: pd.Timestamp | None = None
+    for chunk in tqdm(reader, desc="чтение дат train.csv", unit="чанк", leave=False):
+        dates = pd.to_datetime(chunk[DATE_COL])
+        chunk_min = dates.min()
+        chunk_max = dates.max()
+        min_date = chunk_min if min_date is None else min(min_date, chunk_min)
+        max_date = chunk_max if max_date is None else max(max_date, chunk_max)
+    if min_date is None or max_date is None:
+        raise RuntimeError("train.csv пустой или не содержит колонку date.")
+    return min_date, max_date
+
+
+def select_series_from_train_file(
+    raw_dir: Path,
+    max_series: int,
+    score_start_date: pd.Timestamp,
+    score_end_date: pd.Timestamp,
+    nrows: int | None = None,
+) -> pd.DataFrame:
+    dtype = {
+        "store_nbr": "int16",
+        "item_nbr": "int32",
+        "unit_sales": "float32",
+        "onpromotion": "object",
+    }
+    parts = []
+    usecols = [DATE_COL, *ID_COLS, TARGET_COL]
+    reader = pd.read_csv(raw_dir / RAW_FILES["train"], dtype=dtype, usecols=usecols, chunksize=2_000_000, nrows=nrows)
+    for chunk in tqdm(reader, desc="выбор рядов train.csv", unit="чанк", leave=False):
+        chunk[DATE_COL] = pd.to_datetime(chunk[DATE_COL])
+        mask = chunk[DATE_COL].between(score_start_date, score_end_date)
+        chunk = chunk.loc[mask]
+        if chunk.empty:
+            continue
+        parts.append(chunk.groupby(ID_COLS, observed=True)[TARGET_COL].sum().reset_index())
+
+    if not parts:
+        return pd.DataFrame(columns=ID_COLS)
+
+    scores = (
+        pd.concat(parts, ignore_index=True)
+        .groupby(ID_COLS, observed=True)[TARGET_COL]
+        .sum()
+        .sort_values(ascending=False)
+        .head(max_series)
+        .reset_index()[ID_COLS]
+    )
+    return scores.sort_values(ID_COLS).reset_index(drop=True)
+
+
+def _read_train(
+    path: Path,
+    nrows: int | None,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+    series_index: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     dtype = {
         "store_nbr": "int16",
         "item_nbr": "int32",
         "unit_sales": "float32",
     }
-    train = pd.read_csv(path, parse_dates=[DATE_COL], dtype=dtype, nrows=nrows)
+    usecols = [DATE_COL, "store_nbr", "item_nbr", "unit_sales", "onpromotion"]
+    if start_date is None and end_date is None:
+        train = pd.read_csv(path, parse_dates=[DATE_COL], dtype=dtype, usecols=usecols, nrows=nrows)
+    else:
+        chunks = []
+        reader = pd.read_csv(path, dtype=dtype, usecols=usecols, chunksize=2_000_000, nrows=nrows)
+        for chunk in tqdm(reader, desc="чтение train.csv", unit="чанк", leave=False):
+            chunk[DATE_COL] = pd.to_datetime(chunk[DATE_COL])
+            mask = pd.Series(True, index=chunk.index)
+            if start_date is not None:
+                mask &= chunk[DATE_COL] >= start_date
+            if end_date is not None:
+                mask &= chunk[DATE_COL] <= end_date
+            chunk = chunk.loc[mask]
+            if series_index is not None and not chunk.empty:
+                chunk = chunk.merge(series_index[ID_COLS], on=ID_COLS, how="inner")
+            if not chunk.empty:
+                chunks.append(chunk)
+        if chunks:
+            train = pd.concat(chunks, ignore_index=True)
+        else:
+            train = pd.DataFrame(columns=usecols)
     if "onpromotion" in train.columns:
-        train["onpromotion"] = train["onpromotion"].fillna(False).astype("int8")
+        train["onpromotion"] = train["onpromotion"].fillna(False).astype(bool).astype("int8")
     else:
         train["onpromotion"] = 0
     train[TARGET_COL] = train[TARGET_COL].clip(lower=0).astype("float32")
@@ -93,7 +174,14 @@ def _read_transactions(path: Path) -> pd.DataFrame | None:
     return transactions
 
 
-def load_favorita(raw_dir: Path, include_test: bool = False, nrows: int | None = None) -> FavoritaData:
+def load_favorita(
+    raw_dir: Path,
+    include_test: bool = False,
+    nrows: int | None = None,
+    train_start_date: pd.Timestamp | None = None,
+    train_end_date: pd.Timestamp | None = None,
+    series_index: pd.DataFrame | None = None,
+) -> FavoritaData:
     check_raw_files(raw_dir, include_test=include_test)
 
     test = _read_test(raw_dir / RAW_FILES["test"]) if include_test else None
@@ -104,7 +192,13 @@ def load_favorita(raw_dir: Path, include_test: bool = False, nrows: int | None =
     )
 
     return FavoritaData(
-        train=_read_train(raw_dir / RAW_FILES["train"], nrows=nrows),
+        train=_read_train(
+            raw_dir / RAW_FILES["train"],
+            nrows=nrows,
+            start_date=train_start_date,
+            end_date=train_end_date,
+            series_index=series_index,
+        ),
         items=_read_items(raw_dir / RAW_FILES["items"]),
         stores=_read_stores(raw_dir / RAW_FILES["stores"]),
         oil=_read_oil(raw_dir / RAW_FILES["oil"]),

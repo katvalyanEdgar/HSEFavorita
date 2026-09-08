@@ -81,6 +81,12 @@ pip install -r requirements.txt
 python run_experiment.py validate --max-series 200 --train-window-days 90 --models naive seasonal_naive catboost
 ```
 
+если не хватает оперативной памяти, начинайте с меньшего запуска:
+
+```powershell
+python run_experiment.py validate --max-series 20 --train-window-days 20 --models naive seasonal_naive
+```
+
 для полного набора требуемых моделей:
 
 ```powershell

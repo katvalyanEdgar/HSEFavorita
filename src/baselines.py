@@ -9,6 +9,9 @@ from config import DATE_COL, ID_COLS, TARGET_COL
 
 
 def predict_naive(frame: pd.DataFrame, history: pd.DataFrame) -> pd.Series:
+    if frame.empty or history.empty:
+        return pd.Series(np.zeros(len(frame), dtype="float32"), index=frame.index)
+
     last_values = (
         history.sort_values([*ID_COLS, DATE_COL])
         .groupby(ID_COLS, as_index=False, observed=True)
@@ -20,6 +23,9 @@ def predict_naive(frame: pd.DataFrame, history: pd.DataFrame) -> pd.Series:
 
 
 def predict_seasonal_naive(frame: pd.DataFrame, history: pd.DataFrame, season_length: int = 7) -> pd.Series:
+    if frame.empty or history.empty:
+        return pd.Series(np.zeros(len(frame), dtype="float32"), index=frame.index)
+
     cutoff = history[DATE_COL].max()
     lookup = history[[DATE_COL, *ID_COLS, TARGET_COL]].copy()
     lookup = lookup.rename(columns={TARGET_COL: "prediction", DATE_COL: "source_date"})
@@ -27,7 +33,7 @@ def predict_seasonal_naive(frame: pd.DataFrame, history: pd.DataFrame, season_le
     work = frame[[DATE_COL, *ID_COLS]].copy()
     horizon_step = (work[DATE_COL] - cutoff).dt.days.clip(lower=1)
     seasonal_step = ((horizon_step - 1) % int(season_length)) + 1
-    work["source_date"] = cutoff - pd.to_timedelta(int(season_length) - seasonal_step, unit="D")
+    work["source_date"] = pd.to_datetime(cutoff) - pd.to_timedelta(int(season_length) - seasonal_step, unit="D")
 
     pred = work.merge(lookup, on=[*ID_COLS, "source_date"], how="left")["prediction"]
     return pred.fillna(0).clip(lower=0).astype("float32")
