@@ -68,7 +68,7 @@ def run_validation(
     run_dir = ensure_dir(results_dir / f"validation_{run_id}")
 
     statsforecast_models = [name for name in model_names if name in {"auto_theta", "auto_ets"}]
-    total_steps = 11 + len(model_names) + int(bool(statsforecast_models))
+    total_steps = 11 + len(model_names) + len(statsforecast_models)
     with tqdm(total=total_steps, desc="валидация", unit="этап") as progress:
         progress.set_postfix_str("поиск дат")
         _, valid_end = train_date_bounds(raw_dir, nrows=nrows)
@@ -138,9 +138,9 @@ def run_validation(
         progress.update()
 
         statsforecast_predictions = {}
-        if statsforecast_models:
-            progress.set_postfix_str("классические модели")
-            statsforecast_predictions = predict_statsforecast(history_grid, valid_features, statsforecast_models)
+        for statsforecast_model in statsforecast_models:
+            progress.set_postfix_str(statsforecast_model)
+            statsforecast_predictions.update(predict_statsforecast(history_grid, valid_features, [statsforecast_model]))
             progress.update()
 
         metrics_rows = []

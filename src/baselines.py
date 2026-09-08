@@ -44,7 +44,7 @@ def predict_statsforecast(
     future_frame: pd.DataFrame,
     model_names: Iterable[str],
     season_length: int = 7,
-    n_jobs: int = -1,
+    n_jobs: int = 1,
 ) -> dict[str, pd.Series]:
     try:
         from statsforecast import StatsForecast

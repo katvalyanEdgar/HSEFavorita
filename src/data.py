@@ -99,6 +99,7 @@ def _read_train(
         "store_nbr": "int16",
         "item_nbr": "int32",
         "unit_sales": "float32",
+        "onpromotion": "object",
     }
     usecols = [DATE_COL, "store_nbr", "item_nbr", "unit_sales", "onpromotion"]
     if start_date is None and end_date is None:
