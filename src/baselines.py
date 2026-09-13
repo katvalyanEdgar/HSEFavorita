@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from config import DATE_COL, ID_COLS, TARGET_COL
 
@@ -47,45 +48,99 @@ def predict_statsforecast(
     n_jobs: int = 1,
 ) -> dict[str, pd.Series]:
     try:
-        from statsforecast import StatsForecast
-        from statsforecast.models import AutoETS, AutoTheta, Naive
+        from statsmodels.tsa.forecasting.theta import ThetaModel
+        from statsmodels.tsa.holtwinters import ExponentialSmoothing
     except ImportError as exc:
-        raise RuntimeError("установите statsforecast, чтобы запустить бейзлайны auto_theta и auto_ets.") from exc
+        raise RuntimeError("установите statsmodels, чтобы запустить auto_theta и auto_ets.") from exc
 
     requested = list(model_names)
-    models = []
-    if "auto_theta" in requested:
-        models.append(AutoTheta(season_length=season_length))
-    if "auto_ets" in requested:
-        models.append(AutoETS(season_length=season_length))
-    if not models:
+    if not requested:
         return {}
 
-    train_long = history[[DATE_COL, *ID_COLS, TARGET_COL]].copy()
-    train_long["unique_id"] = train_long["store_nbr"].astype(str) + "_" + train_long["item_nbr"].astype(str)
-    train_long = train_long.rename(columns={DATE_COL: "ds", TARGET_COL: "y"})[["unique_id", "ds", "y"]]
-    train_long["y"] = train_long["y"].fillna(0).clip(lower=0).astype("float32")
+    history_end = history[DATE_COL].max()
+    horizon = int((future_frame[DATE_COL].max() - history_end).days)
+    future_dates = pd.date_range(history_end + pd.Timedelta(days=1), periods=horizon, freq="D")
+    future_lookup = future_frame[[DATE_COL, *ID_COLS]].copy()
+    result = {name: pd.Series(np.zeros(len(future_frame), dtype="float32"), index=future_frame.index) for name in requested}
 
-    horizon = int((future_frame[DATE_COL].max() - history[DATE_COL].max()).days)
-    sf = StatsForecast(models=models, freq="D", n_jobs=n_jobs, fallback_model=Naive())
-    forecast = sf.forecast(df=train_long, h=horizon).reset_index()
+    def fallback_forecast(y: pd.Series) -> np.ndarray:
+        if y.empty:
+            return np.zeros(horizon, dtype="float32")
+        tail = y.tail(season_length).to_numpy(dtype="float32")
+        if len(tail) == 0:
+            return np.zeros(horizon, dtype="float32")
+        return np.resize(tail, horizon).clip(min=0).astype("float32")
 
-    future = future_frame[[DATE_COL, *ID_COLS]].copy()
-    future["unique_id"] = future["store_nbr"].astype(str) + "_" + future["item_nbr"].astype(str)
-    merged = future.merge(forecast, left_on=["unique_id", DATE_COL], right_on=["unique_id", "ds"], how="left")
+    def forecast_theta(y: pd.Series) -> np.ndarray:
+        if len(y) < season_length * 2 or float(y.sum()) == 0.0:
+            return fallback_forecast(y)
+        try:
+            fitted = ThetaModel(y, period=season_length, deseasonalize=True, method="auto").fit()
+            return np.asarray(fitted.forecast(horizon), dtype="float32").clip(min=0)
+        except Exception:
+            return fallback_forecast(y)
 
-    result: dict[str, pd.Series] = {}
-    for requested_name in requested:
-        candidates = {
-            "auto_theta": ["AutoTheta", "AutoTheta_season_length-7"],
-            "auto_ets": ["AutoETS", "AutoETS_season_length-7"],
-        }[requested_name]
-        column = next((col for col in candidates if col in merged.columns), None)
-        if column is None:
-            matching = [col for col in merged.columns if col.lower().startswith(requested_name.replace("auto_", "auto"))]
-            column = matching[0] if matching else None
-        if column is None:
-            result[requested_name] = pd.Series(np.zeros(len(future_frame), dtype="float32"), index=future_frame.index)
-        else:
-            result[requested_name] = merged[column].fillna(0).clip(lower=0).astype("float32")
+    def forecast_ets(y: pd.Series) -> np.ndarray:
+        if len(y) < season_length * 2 or float(y.sum()) == 0.0:
+            return fallback_forecast(y)
+        candidates = [
+            {"trend": None, "seasonal": None},
+            {"trend": "add", "seasonal": None},
+            {"trend": None, "seasonal": "add"},
+            {"trend": "add", "seasonal": "add"},
+        ]
+        best_score = np.inf
+        best_forecast: np.ndarray | None = None
+        for params in candidates:
+            try:
+                seasonal_periods = season_length if params["seasonal"] is not None else None
+                model = ExponentialSmoothing(
+                    y,
+                    trend=params["trend"],
+                    seasonal=params["seasonal"],
+                    seasonal_periods=seasonal_periods,
+                    initialization_method="estimated",
+                )
+                fitted = model.fit(optimized=True)
+                score = float(getattr(fitted, "aic", np.inf))
+                if not np.isfinite(score):
+                    score = float(getattr(fitted, "sse", np.inf))
+                if score < best_score:
+                    best_score = score
+                    best_forecast = np.asarray(fitted.forecast(horizon), dtype="float32")
+            except Exception:
+                continue
+        if best_forecast is None:
+            return fallback_forecast(y)
+        return best_forecast.clip(min=0).astype("float32")
+
+    grouped = list(history.groupby(ID_COLS, observed=True))
+    for key, group in tqdm(grouped, desc="классические ряды", unit="ряд", leave=False):
+        key = key if isinstance(key, tuple) else (key,)
+        y = (
+            group.groupby(DATE_COL, observed=True)[TARGET_COL]
+            .sum()
+            .sort_index()
+            .asfreq("D", fill_value=0)
+            .clip(lower=0)
+            .astype("float64")
+        )
+        forecasts = {}
+        if "auto_theta" in requested:
+            forecasts["auto_theta"] = forecast_theta(y)
+        if "auto_ets" in requested:
+            forecasts["auto_ets"] = forecast_ets(y)
+
+        forecast_frame = pd.DataFrame({DATE_COL: future_dates})
+        for id_col, value in zip(ID_COLS, key):
+            forecast_frame[id_col] = value
+        matched = future_lookup.reset_index().merge(forecast_frame, on=[DATE_COL, *ID_COLS], how="inner")
+        if matched.empty:
+            continue
+        offsets = (matched[DATE_COL] - future_dates[0]).dt.days.to_numpy()
+        for name, values in forecasts.items():
+            result[name].loc[matched["index"].to_numpy()] = values[offsets]
+
+    for name in result:
+        result[name] = result[name].fillna(0).clip(lower=0).astype("float32")
     return result

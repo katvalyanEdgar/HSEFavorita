@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
-from config import DATE_COL, TARGET_COL, TORCH_MLP_PARAMS
+from config import RANDOM_SEED, TARGET_COL, TORCH_MLP_PARAMS
 from src.models_ml import EXCLUDED_FEATURES, split_feature_columns
 
 
@@ -73,8 +73,14 @@ def predict_torch_mlp(
     x_cat, x_num = encoder.transform(train_features)
     p_cat, p_num = encoder.transform(predict_features)
     y = np.log1p(train_features[TARGET_COL].clip(lower=0).to_numpy(dtype="float32"))
+    target_log_cap = max(float(np.quantile(y, 0.999)), 1.0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    np.random.seed(RANDOM_SEED)
+    torch.manual_seed(RANDOM_SEED)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(RANDOM_SEED)
+
     train_ds = TensorDataset(
         torch.from_numpy(x_cat),
         torch.from_numpy(x_num),
@@ -115,6 +121,7 @@ def predict_torch_mlp(
             optimizer.zero_grad(set_to_none=True)
             loss = loss_fn(model(batch_cat, batch_num), batch_y)
             loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
     model.eval()
@@ -128,5 +135,6 @@ def predict_torch_mlp(
             predictions.append(model(batch_cat, batch_num).cpu().numpy())
 
     pred_log = np.vstack(predictions).reshape(-1)
+    pred_log = np.clip(pred_log, 0, target_log_cap)
     pred = np.expm1(pred_log).clip(min=0)
     return pd.Series(pred.astype("float32"), index=predict_features.index)

@@ -7,6 +7,8 @@ from tqdm.auto import tqdm
 
 from config import (
     DATE_COL,
+    DEFAULT_CATBOOST_MAX_TRAIN_ROWS,
+    DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE,
     DEFAULT_LAGS,
     DEFAULT_ROLLING_WINDOWS,
     DEFAULT_TRAIN_WINDOW_DAYS,
@@ -62,6 +64,8 @@ def run_validation(
     train_window_days: int = DEFAULT_TRAIN_WINDOW_DAYS,
     valid_days: int = DEFAULT_VALID_DAYS,
     nrows: int | None = None,
+    catboost_max_train_rows: int | None = DEFAULT_CATBOOST_MAX_TRAIN_ROWS,
+    catboost_prediction_chunk_size: int = DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE,
 ) -> pd.DataFrame:
     model_names = _parse_models(models or ["naive", "seasonal_naive", "auto_theta", "auto_ets", "catboost", "torch_mlp"])
     run_id = timestamp()
@@ -153,7 +157,12 @@ def run_validation(
             elif model_name in statsforecast_predictions:
                 prediction = statsforecast_predictions[model_name]
             elif model_name == "catboost":
-                prediction = predict_catboost(train_features, valid_features)
+                prediction = predict_catboost(
+                    train_features,
+                    valid_features,
+                    max_train_rows=catboost_max_train_rows,
+                    prediction_chunk_size=catboost_prediction_chunk_size,
+                )
             elif model_name == "torch_mlp":
                 prediction = predict_torch_mlp(train_features, valid_features)
             else:
@@ -179,6 +188,8 @@ def run_validation(
             "valid_days": valid_days,
             "valid_start": str(valid_start.date()),
             "valid_end": str(valid_end.date()),
+            "catboost_max_train_rows": catboost_max_train_rows,
+            "catboost_prediction_chunk_size": catboost_prediction_chunk_size,
             "run_dir": str(run_dir),
         },
     )
@@ -192,6 +203,8 @@ def run_submission(
     max_series: int | None = None,
     train_window_days: int = DEFAULT_TRAIN_WINDOW_DAYS,
     nrows: int | None = None,
+    catboost_max_train_rows: int | None = DEFAULT_CATBOOST_MAX_TRAIN_ROWS,
+    catboost_prediction_chunk_size: int = DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE,
 ) -> Path:
     _parse_models([model_name])
     run_id = timestamp()
@@ -259,7 +272,12 @@ def run_submission(
         elif model_name in {"auto_theta", "auto_ets"}:
             prediction = predict_statsforecast(history_grid, test_features, [model_name])[model_name]
         elif model_name == "catboost":
-            prediction = predict_catboost(train_features, test_features)
+            prediction = predict_catboost(
+                train_features,
+                test_features,
+                max_train_rows=catboost_max_train_rows,
+                prediction_chunk_size=catboost_prediction_chunk_size,
+            )
         elif model_name == "torch_mlp":
             prediction = predict_torch_mlp(train_features, test_features)
         else:
@@ -280,6 +298,8 @@ def run_submission(
             "model": model_name,
             "max_series": max_series,
             "train_window_days": train_window_days,
+            "catboost_max_train_rows": catboost_max_train_rows,
+            "catboost_prediction_chunk_size": catboost_prediction_chunk_size,
             "submission_path": str(submission_path),
         },
     )

@@ -21,6 +21,12 @@ class FavoritaData:
     sample_submission: pd.DataFrame | None = None
 
 
+def _parse_onpromotion(values: pd.Series) -> pd.Series:
+    normalized = values.astype("string").str.strip().str.lower()
+    true_values = {"true", "1", "1.0", "yes", "y", "t"}
+    return normalized.isin(true_values).astype("int8")
+
+
 def check_raw_files(raw_dir: Path, include_test: bool) -> None:
     required = ["train", "items", "stores", "oil", "holidays"]
     if include_test:
@@ -124,7 +130,7 @@ def _read_train(
         else:
             train = pd.DataFrame(columns=usecols)
     if "onpromotion" in train.columns:
-        train["onpromotion"] = train["onpromotion"].fillna(False).astype(bool).astype("int8")
+        train["onpromotion"] = _parse_onpromotion(train["onpromotion"])
     else:
         train["onpromotion"] = 0
     train[TARGET_COL] = train[TARGET_COL].clip(lower=0).astype("float32")
@@ -134,7 +140,7 @@ def _read_train(
 def _read_test(path: Path) -> pd.DataFrame:
     dtype = {"id": "int64", "store_nbr": "int16", "item_nbr": "int32"}
     test = pd.read_csv(path, parse_dates=[DATE_COL], dtype=dtype)
-    test["onpromotion"] = test["onpromotion"].fillna(False).astype("int8")
+    test["onpromotion"] = _parse_onpromotion(test["onpromotion"])
     return test
 
 

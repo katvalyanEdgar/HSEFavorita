@@ -18,6 +18,8 @@ RANDOM_SEED = 42
 FORECAST_HORIZON = 16
 DEFAULT_VALID_DAYS = 16
 DEFAULT_TRAIN_WINDOW_DAYS = 180
+DEFAULT_CATBOOST_MAX_TRAIN_ROWS = 2_000_000
+DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE = 250_000
 
 DEFAULT_LAGS = (16, 17, 18, 21, 28, 35, 42, 56, 91, 182, 364)
 DEFAULT_ROLLING_WINDOWS = (7, 14, 28, 56)
@@ -45,9 +47,9 @@ CATBOOST_PARAMS = {
 }
 
 TORCH_MLP_PARAMS = {
-    "epochs": 8,
+    "epochs": 30,
     "batch_size": 4096,
-    "learning_rate": 1e-3,
-    "hidden_units": (512, 256, 128),
-    "dropout": 0.15,
+    "learning_rate": 5e-4,
+    "hidden_units": (256, 128),
+    "dropout": 0.10,
 }
