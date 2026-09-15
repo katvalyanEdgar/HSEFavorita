@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 from config import (
@@ -25,9 +26,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--nrows", type=int, default=None, help="Optional train.csv row limit for smoke tests.")
     parser.add_argument("--valid-days", type=int, default=DEFAULT_VALID_DAYS)
     parser.add_argument(
+        "--classic-jobs",
+        type=int,
+        default=max(1, min(4, os.cpu_count() or 1)),
+        help="Parallel workers for auto_theta and auto_ets.",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
-        default=["naive", "seasonal_naive", "auto_theta", "auto_ets", "catboost", "torch_mlp"],
+        default=["naive", "seasonal_naive"],
         help="Models: naive seasonal_naive auto_theta auto_ets catboost torch_mlp",
     )
     parser.add_argument(
@@ -55,6 +62,7 @@ def main() -> None:
             train_window_days=args.train_window_days,
             valid_days=args.valid_days,
             nrows=args.nrows,
+            classic_jobs=args.classic_jobs,
             catboost_max_train_rows=args.catboost_max_train_rows,
             catboost_prediction_chunk_size=args.catboost_prediction_chunk_size,
         )
@@ -69,6 +77,7 @@ def main() -> None:
             max_series=args.max_series,
             train_window_days=args.train_window_days,
             nrows=args.nrows,
+            classic_jobs=args.classic_jobs,
             catboost_max_train_rows=args.catboost_max_train_rows,
             catboost_prediction_chunk_size=args.catboost_prediction_chunk_size,
         )

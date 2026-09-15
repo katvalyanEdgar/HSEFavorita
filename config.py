@@ -43,6 +43,7 @@ CATBOOST_PARAMS = {
     "eval_metric": "RMSE",
     "random_seed": RANDOM_SEED,
     "allow_writing_files": False,
+    "thread_count": -1,
     "verbose": 100,
 }
 

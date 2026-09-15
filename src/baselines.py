@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections.abc import Iterable
 
 import numpy as np
@@ -114,8 +115,7 @@ def predict_statsforecast(
             return fallback_forecast(y)
         return best_forecast.clip(min=0).astype("float32")
 
-    grouped = list(history.groupby(ID_COLS, observed=True))
-    for key, group in tqdm(grouped, desc="классические ряды", unit="ряд", leave=False):
+    def forecast_group(key: object, group: pd.DataFrame) -> tuple[tuple[object, ...], dict[str, np.ndarray]]:
         key = key if isinstance(key, tuple) else (key,)
         y = (
             group.groupby(DATE_COL, observed=True)[TARGET_COL]
@@ -130,7 +130,30 @@ def predict_statsforecast(
             forecasts["auto_theta"] = forecast_theta(y)
         if "auto_ets" in requested:
             forecasts["auto_ets"] = forecast_ets(y)
+        return key, forecasts
 
+    grouped = list(history.groupby(ID_COLS, observed=True))
+    if int(n_jobs) <= 1:
+        forecast_items = [
+            forecast_group(key, group)
+            for key, group in tqdm(grouped, desc="классические ряды", unit="ряд", leave=False)
+        ]
+    else:
+        workers = max(1, int(n_jobs))
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(forecast_group, key, group) for key, group in grouped]
+            forecast_items = [
+                future.result()
+                for future in tqdm(
+                    as_completed(futures),
+                    total=len(futures),
+                    desc=f"классические ряды x{workers}",
+                    unit="ряд",
+                    leave=False,
+                )
+            ]
+
+    for key, forecasts in forecast_items:
         forecast_frame = pd.DataFrame({DATE_COL: future_dates})
         for id_col, value in zip(ID_COLS, key):
             forecast_frame[id_col] = value

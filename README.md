@@ -1,39 +1,30 @@
-# Прогнозирование продаж Favorita с экзогенными признаками
+# Прогнозирование продаж Favorita
 
+Проект для прогноза продаж unit_sales на 16 дней вперед по данным Kaggle Favorita.
 
-Задача: предсказать unit_sales для пар store_nbr/item_nbr на 16 дней вперед. Основная метрика - NWRMSLE. Для скоропортящихся товаров применяется вес 1.25, для остальных - 1.0.
-
-## Структура
-
-- config.py - общие пути и настройки
-- downloadData.py - загрузка данных
-- run_experiment.py - запуск валидации и формирование submission
-- src - код подготовки данных, признаков, моделей и метрик
-- data/raw - исходные данные
-- results - результаты запусков
-- reports/report.md - итоговый отчет
-
-## Данные
+## Установка
 
 pip install -r requirements.txt
 python downloadData.py
+
+Для полного набора моделей:
+
+pip install -r requirements-full.txt
 
 ## Запуск
 
 Быстрая проверка:
 
-python run_experiment.py validate --max-series 200 --train-window-days 90 --models naive seasonal_naive catboost
+python run_experiment.py validate --max-series 200 --train-window-days 90
 
-Полный локальный запуск:
+Короткий запуск с классическими моделями:
+
+python run_experiment.py validate --max-series 20 --train-window-days 60 --classic-jobs 8 --models naive seasonal_naive auto_theta auto_ets
+
+Полный запуск:
 
 python run_experiment.py validate --models naive seasonal_naive auto_theta auto_ets catboost torch_mlp
 
-## Результаты
+## Файлы
 
-Результаты сохраняются в results/validation_<timestamp>: metrics.csv, predictions_<model>.csv, train_features.parquet, valid_features.parquet и run_config.json.
-
-Submission сохраняется в results/submission_<timestamp>.
-
-## Отчет
-
-Итоговый отчет находится в reports/report.md.
+Код находится в src, результаты сохраняются в results, отчет лежит в reports/report.md, там же находится score kaggle.

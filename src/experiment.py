@@ -56,6 +56,17 @@ def _write_predictions(path: Path, frame: pd.DataFrame, prediction: pd.Series) -
     output.to_csv(path, index=False)
 
 
+def _write_feature_snapshot(path_stem: Path, frame: pd.DataFrame) -> Path:
+    parquet_path = path_stem.with_suffix(".parquet")
+    try:
+        frame.to_parquet(parquet_path, index=False)
+        return parquet_path
+    except ImportError:
+        csv_path = path_stem.with_suffix(".csv")
+        frame.to_csv(csv_path, index=False)
+        return csv_path
+
+
 def run_validation(
     raw_dir: Path,
     results_dir: Path = RESULTS_DIR,
@@ -64,10 +75,11 @@ def run_validation(
     train_window_days: int = DEFAULT_TRAIN_WINDOW_DAYS,
     valid_days: int = DEFAULT_VALID_DAYS,
     nrows: int | None = None,
+    classic_jobs: int = 1,
     catboost_max_train_rows: int | None = DEFAULT_CATBOOST_MAX_TRAIN_ROWS,
     catboost_prediction_chunk_size: int = DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE,
 ) -> pd.DataFrame:
-    model_names = _parse_models(models or ["naive", "seasonal_naive", "auto_theta", "auto_ets", "catboost", "torch_mlp"])
+    model_names = _parse_models(models or ["naive", "seasonal_naive"])
     run_id = timestamp()
     run_dir = ensure_dir(results_dir / f"validation_{run_id}")
 
@@ -137,14 +149,16 @@ def run_validation(
         progress.update()
 
         progress.set_postfix_str("сохранение признаков")
-        train_features.to_parquet(run_dir / "train_features.parquet", index=False)
-        valid_features.to_parquet(run_dir / "valid_features.parquet", index=False)
+        train_features_path = _write_feature_snapshot(run_dir / "train_features", train_features)
+        valid_features_path = _write_feature_snapshot(run_dir / "valid_features", valid_features)
         progress.update()
 
         statsforecast_predictions = {}
         for statsforecast_model in statsforecast_models:
             progress.set_postfix_str(statsforecast_model)
-            statsforecast_predictions.update(predict_statsforecast(history_grid, valid_features, [statsforecast_model]))
+            statsforecast_predictions.update(
+                predict_statsforecast(history_grid, valid_features, [statsforecast_model], n_jobs=classic_jobs)
+            )
             progress.update()
 
         metrics_rows = []
@@ -186,10 +200,13 @@ def run_validation(
             "max_series": max_series,
             "train_window_days": train_window_days,
             "valid_days": valid_days,
+            "classic_jobs": classic_jobs,
             "valid_start": str(valid_start.date()),
             "valid_end": str(valid_end.date()),
             "catboost_max_train_rows": catboost_max_train_rows,
             "catboost_prediction_chunk_size": catboost_prediction_chunk_size,
+            "train_features_path": str(train_features_path),
+            "valid_features_path": str(valid_features_path),
             "run_dir": str(run_dir),
         },
     )
@@ -203,6 +220,7 @@ def run_submission(
     max_series: int | None = None,
     train_window_days: int = DEFAULT_TRAIN_WINDOW_DAYS,
     nrows: int | None = None,
+    classic_jobs: int = 1,
     catboost_max_train_rows: int | None = DEFAULT_CATBOOST_MAX_TRAIN_ROWS,
     catboost_prediction_chunk_size: int = DEFAULT_CATBOOST_PREDICTION_CHUNK_SIZE,
 ) -> Path:
@@ -270,7 +288,7 @@ def run_submission(
         elif model_name == "seasonal_naive":
             prediction = predict_seasonal_naive(test_features, history_grid, season_length=7)
         elif model_name in {"auto_theta", "auto_ets"}:
-            prediction = predict_statsforecast(history_grid, test_features, [model_name])[model_name]
+            prediction = predict_statsforecast(history_grid, test_features, [model_name], n_jobs=classic_jobs)[model_name]
         elif model_name == "catboost":
             prediction = predict_catboost(
                 train_features,

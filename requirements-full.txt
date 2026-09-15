@@ -1,0 +1,4 @@
+-r requirements.txt
+catboost>=1.2.10
+statsmodels>=0.15
+torch>=2.9
